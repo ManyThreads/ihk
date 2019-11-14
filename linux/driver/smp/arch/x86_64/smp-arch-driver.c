@@ -146,8 +146,9 @@ int ihk_smp_arch_symbols_init(void)
 
 	_get_uv_system_type =
 		(void *) kallsyms_lookup_name("get_uv_system_type");
-	if (WARN_ON(!_get_uv_system_type))
-		return -EFAULT;
+	if (WARN_ON(!_get_uv_system_type)){
+		//return -EFAULT;
+	}
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
 	_init_deasserted = (void *) kallsyms_lookup_name("init_deasserted");
@@ -318,8 +319,8 @@ int smp_wakeup_secondary_cpu(int apicid, unsigned long start_eip)
 	atomic_set(_init_deasserted, 0);
 #endif
 
-	if (_get_uv_system_type() != UV_NON_UNIQUE_APIC) {
-		pr_debug("Setting warm reset code and vector.\n");
+	if (_get_uv_system_type == 0 || _get_uv_system_type() != UV_NON_UNIQUE_APIC) {
+		printk(KERN_INFO "Setting warm reset code and vector. \n");
 
 		smpboot_setup_warm_reset_vector(start_eip);
 

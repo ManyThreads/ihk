@@ -32,8 +32,9 @@
 #include <ihk/ihklib.h>
 #include <ihk/ihklib_private.h>
 #include <ihk/ihk_host_user.h>
+#include <sys/timerfd.h>
 
-//#define DEBUG
+#define DEBUG
 
 #ifdef DEBUG
 #define	dprintf(...)											\
@@ -235,9 +236,10 @@ static int fwrite_kmsg(int dev_index, void* handle, int os_index, FILE **fps, in
 	nread = ioctl(devfd, IHK_DEVICE_READ_KMSG_BUF, (unsigned long)&desc);
 	CHKANDJUMP(nread < 0 || nread > IHK_KMSG_SIZE, nread, "ioctl failed\n");
 	if (nread == 0) {
-		dprintf("nread is zero\n");
+		/*dprintf("nread is zero\n");*/
 		goto out;
 	}
+		dprintf("nread is %i\n", nread);
 	close(devfd);
 	devfd = -1;
 
@@ -269,7 +271,8 @@ static int fwrite_kmsg(int dev_index, void* handle, int os_index, FILE **fps, in
 
 	ret = fwrite(buf, 1, nread, fps[*prod]); 
 	sizes[*prod] += nread;
-	dprintf("fwrite returned %d\n", ret);
+	fflush(fps[*prod]);
+	/*dprintf("fwrite returned %d\n", ret);*/
  out:
 	if (devfd >= 0) {
 		close(devfd);
@@ -338,9 +341,9 @@ static ssize_t syslog_kmsg(FILE **fps, int prod) {
 
 static void* redirect_kmsg(void* _arg) {
 	struct thr_args *arg = (struct thr_args *)_arg;
-	int devfd = -1, evfd_kmsg = -1, evfd_status = -1, epfd = -1;
+	int devfd = -1, evfd_kmsg = -1, evfd_status = -1, epfd = -1, timerfd = -1;
 	struct epoll_event event;
-	struct epoll_event events[2];
+	struct epoll_event events[20];
 	int ret = 0, ret_lib;
 	int i;
 	FILE* fps[IHKMOND_NUM_FILEBUF_SLOTS];
@@ -385,6 +388,7 @@ static void* redirect_kmsg(void* _arg) {
 	desc_get.os_index = arg->os_index;
 	ret_lib = ioctl(devfd, IHK_DEVICE_GET_KMSG_BUF, &desc_get);
 	CHKANDJUMP(ret_lib < 0, ret_lib, "IHK_DEVICE_GET_KMSG_BUF returned %d\n", ret_lib);
+	dprintf("IHK_DEVICE_GET_KMSG_BUF returned %p\n", desc_get.handle);
 
 	close(devfd);
 	devfd = -1;
@@ -399,6 +403,24 @@ static void* redirect_kmsg(void* _arg) {
 	ret_lib = epoll_ctl(epfd, EPOLL_CTL_ADD, evfd_kmsg, &event);
 	CHKANDJUMP(ret_lib != 0, -EINVAL, "epoll_ctl failed\n");
 
+	/* periodically trigger kmsg-read */
+	timerfd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+	CHKANDJUMP(timerfd < 0, -EINVAL, "timerfd\n");
+
+	memset(&event, 0, sizeof(struct epoll_event));
+	event.events = EPOLLIN;
+	event.data.fd = timerfd;
+	ret_lib = epoll_ctl(epfd, EPOLL_CTL_ADD, timerfd, &event);
+	CHKANDJUMP(ret_lib != 0, -EINVAL, "epoll_ctl failed\n");
+
+	its.it_value.tv_sec = 1;
+	its.it_value.tv_nsec = 0;
+
+	its.it_interval.tv_sec = 1; // Every 2 seconds interval
+	its.it_interval.tv_nsec = 0;
+
+	timerfd_settime(timerfd, 0, &its, NULL);
+
 	/* Get notification when LWK panics or gets hungup */
 	evfd_status = ihk_os_get_eventfd(arg->os_index, IHK_OS_EVENTFD_TYPE_STATUS);
 	CHKANDJUMP(evfd_status < 0, -EINVAL, "ihk_os_get_eventfd\n");
@@ -410,12 +432,17 @@ static void* redirect_kmsg(void* _arg) {
 	CHKANDJUMP(ret_lib != 0, -EINVAL, "epoll_ctl failed\n");
 
 	do {
-		int nfd = epoll_wait(epfd, events, 2, -1);
+		int nfd = epoll_wait(epfd, events, 20, -1);
 		if (nfd < 0 && errno == EINTR)
 			continue;
 		CHKANDJUMP(nfd < 0, -EINVAL, "epoll_wait failed\n");
 		for (i = 0; i < nfd; i++) {
-			if (events[i].data.fd == evfd_kmsg) {
+			if (events[i].data.fd == timerfd) {
+				reap_event(events[i].data.fd);
+				/*dprintf("timer event detected\n");*/
+				ret_lib = fwrite_kmsg(arg->dev_index, desc_get.handle, arg->os_index, fps, sizes, &prod, 1);
+				/*CHKANDJUMP(ret_lib < 0, -EINVAL, "fwrite_kmsg returned %d\n", ret_lib);*/
+			} else if (events[i].data.fd == evfd_kmsg) {
 				reap_event(events[i].data.fd);
 				dprintf("kmsg event detected\n");
 				ret_lib = fwrite_kmsg(arg->dev_index, desc_get.handle, arg->os_index, fps, sizes, &prod, 1);

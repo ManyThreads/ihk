@@ -29,7 +29,7 @@
 #include <ikc/msg.h>
 #include "host_linux.h"
 
-//#define DEBUG_IKC
+#define DEBUG_IKC
 
 #ifdef DEBUG_IKC
 #define	dkprintf(...) kprintf(__VA_ARGS__)
@@ -38,6 +38,8 @@
 #define dkprintf(...) do { if (0) printk(__VA_ARGS__); } while (0)
 #define	ekprintf(...) printk(__VA_ARGS__)
 #endif
+
+#define dprintf printk
 
 static int arch_master_handler(struct ihk_ikc_channel_desc *c,
                                void *__packet, void *__os);
@@ -63,10 +65,11 @@ struct ihk_ikc_channel_desc *ihk_host_ikc_init_first(ihk_os_t ihk_os,
 		 * but the local is possible... */
 		dprintf("OS is now marked ready.\n");
 
-		ihk_os_get_special_address(ihk_os, IHK_SPADDR_MIKC_QUEUE_RECV,
-		                           &r, &rsz);
-		ihk_os_get_special_address(ihk_os, IHK_SPADDR_MIKC_QUEUE_SEND,
-		                           &w, &wsz);
+		if(ihk_os_get_special_address(ihk_os, IHK_SPADDR_MIKC_QUEUE_RECV,
+		                           &r, &rsz)) return 0;
+
+		if(ihk_os_get_special_address(ihk_os, IHK_SPADDR_MIKC_QUEUE_SEND,
+		                           &w, &wsz)) return 0;
 
 		dprintf("MIKC rq: 0x%lX, wq: 0x%lX\n", r, w);
 
@@ -123,13 +126,13 @@ int ihk_ikc_master_init(ihk_os_t __os)
 	if (!os->mchannel) {
 		return -EINVAL;
 	} else {
-		ihk_ikc_enable_channel(os->mchannel);
+		/*ihk_ikc_enable_channel(os->mchannel);*/
 		
-		dprintf("ikc_master_init done.\n");
+		/*dprintf("ikc_master_init done.\n");*/
 
-		/* ack send */
-		packet.msg = IHK_IKC_MASTER_MSG_INIT_ACK;
-		ihk_ikc_send(os->mchannel, &packet, 0);
+		/*[> ack send <]*/
+		/*packet.msg = IHK_IKC_MASTER_MSG_INIT_ACK;*/
+		/*ihk_ikc_send(os->mchannel, &packet, 0);*/
 
 		return 0;
 	}
