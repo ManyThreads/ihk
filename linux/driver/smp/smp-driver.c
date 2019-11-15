@@ -94,7 +94,15 @@ static int (*ihk_ioremap_page_range)(unsigned long addr, unsigned long end,
 				     phys_addr_t phys_addr, pgprot_t prot);
 spinlock_t *ihk_vmap_area_lock;
 struct rb_root *ihk_vmap_area_root;
+
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+struct rb_root *ihk_vmap_area_root;
+struct list_head *ihk_vmap_area_list;
+static void (*ihk_insert_vmap_area)(struct vmap_area *va,struct rb_root *root, struct list_head *head);
+#elif
 static void (*ihk___insert_vmap_area)(struct vmap_area *va);
+#endif
+
 static void (*ihk___free_vmap_area)(struct vmap_area *va);
 
 static int smp_ihk_os_get_special_addr(ihk_os_t ihk_os, void *priv,
@@ -720,7 +728,11 @@ static int smp_ihk_os_map_lwk(unsigned long phys)
 		lwk_va->va_start = IHK_SMP_MAP_KERNEL_START;
 		lwk_va->va_end = MODULES_END;
 		lwk_va->flags = 0;
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+		ihk_insert_vmap_area(lwk_va,ihk_vmap_area_root, ihk_vmap_area_list);
+#elif
 		ihk___insert_vmap_area(lwk_va);
+#endif
 	}
 
 	spin_unlock_irqrestore(ihk_vmap_area_lock, flags);
@@ -4315,10 +4327,21 @@ static int ihk_smp_symbols_init(void)
 	if (WARN_ON(!ihk_vmap_area_root))
 		goto err;
 
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+	ihk_vmap_area_list = (void *)kallsyms_lookup_name("vmap_area_list");
+	if (WARN_ON(!ihk_vmap_area_list))
+		goto err;
+
+	ihk_insert_vmap_area =
+		(void *)kallsyms_lookup_name("insert_vmap_area");
+	if (WARN_ON(!ihk_insert_vmap_area))
+		goto err;
+#elif
 	ihk___insert_vmap_area =
 		(void *)kallsyms_lookup_name("__insert_vmap_area");
 	if (WARN_ON(!ihk___insert_vmap_area))
 		goto err;
+#endif
 
 	ihk___free_vmap_area = (void *)kallsyms_lookup_name("__free_vmap_area");
 	if (WARN_ON(!ihk___free_vmap_area))
