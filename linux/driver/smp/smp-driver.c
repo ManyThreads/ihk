@@ -4334,6 +4334,11 @@ static int ihk_smp_symbols_init(void)
 
 	ihk_insert_vmap_area =
 		(void *)kallsyms_lookup_name("insert_vmap_area");
+	if(!ihk_insert_vmap_area){
+		ihk_insert_vmap_area =
+		(void *)kallsyms_lookup_name("insert_vmap_area.constprop.0");
+	}
+
 	if (WARN_ON(!ihk_insert_vmap_area))
 		goto err;
 #elif
