@@ -350,6 +350,7 @@ static void* redirect_kmsg(void* _arg) {
 	int sizes[IHKMOND_NUM_FILEBUF_SLOTS];
 	int prod = 0; /* Producer pointer */
 	struct ihk_device_get_kmsg_buf_desc desc_get;
+	struct itimerspec its;
 
 	memset(fps, 0, IHKMOND_NUM_FILEBUF_SLOTS * sizeof(FILE *));
 	memset(sizes, 0, IHKMOND_NUM_FILEBUF_SLOTS * sizeof(int));
