@@ -25,6 +25,7 @@
 #include <linux/slub_def.h>
 #include <linux/time.h>
 #include <linux/hugetlb.h>
+#include <linux/vmalloc.h>
 #include <asm/hw_irq.h>
 #include <asm/pgtable.h>
 #if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,32)
@@ -35,7 +36,7 @@
 #include <ihk/ihk_host_driver.h>
 #include <ihk/ihk_host_misc.h>
 #include <ihk/ihk_host_user.h>
-//#define IHK_DEBUG
+#define IHK_DEBUG
 #include <ihk/misc/debug.h>
 #include <ikc/msg.h>
 //#include <linux/shimos.h>
@@ -89,21 +90,25 @@ unsigned long ident_page_table;
 static struct list_head ihk_mem_free_chunks;
 struct list_head ihk_mem_used_chunks;
 
-static struct vmap_area *lwk_va;
 static int (*ihk_ioremap_page_range)(unsigned long addr, unsigned long end,
 				     phys_addr_t phys_addr, pgprot_t prot);
-spinlock_t *ihk_vmap_area_lock;
-struct rb_root *ihk_vmap_area_root;
 
-#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
 struct rb_root *ihk_vmap_area_root;
-struct list_head *ihk_vmap_area_list;
-static void (*ihk_insert_vmap_area)(struct vmap_area *va,struct rb_root *root, struct list_head *head);
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+static void *lwk_va = NULL;
+
+static void* (*ihk___vmalloc_node_range)(unsigned long size, unsigned long align,
+			unsigned long start, unsigned long end, gfp_t gfp_mask,
+			pgprot_t prot, unsigned long vm_flags, int node,
+			const void *caller);
 #elif
+static struct vmap_area *lwk_va;
+spinlock_t *ihk_vmap_area_lock;
+
 static void (*ihk___insert_vmap_area)(struct vmap_area *va);
-#endif
 
 static void (*ihk___free_vmap_area)(struct vmap_area *va);
+#endif
 
 static int smp_ihk_os_get_special_addr(ihk_os_t ihk_os, void *priv,
                                        enum ihk_special_addr_type type,
@@ -705,9 +710,17 @@ bp_cpu->numa_id = linux_numa_2_lwk_numa(os,
 
 static int smp_ihk_os_map_lwk(unsigned long phys)
 {
-	unsigned long flags;
-	int vmap_area_taken = 0;
 
+
+
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+	printk("smp_ihk_os_map_lwk: going to alloc vmap range: size=%lu, align=%lu, start=%lu, end=%lu\n", MODULES_END - IHK_SMP_MAP_KERNEL_START, PAGE_SIZE, IHK_SMP_MAP_KERNEL_START, MODULES_END);
+	lwk_va = ihk___vmalloc_node_range(MODULES_END - IHK_SMP_MAP_KERNEL_START, PAGE_SIZE ,IHK_SMP_MAP_KERNEL_START, MODULES_END, GFP_KERNEL, PAGE_KERNEL, VM_NO_GUARD, NUMA_NO_NODE, __builtin_return_address(0));
+	printk("smp_ihk_os_map_lwk: vmalloc_node_range return %lu", lwk_va);
+	if(!lwk_va){
+		return -1;
+	}
+#elif
 	/*
 	 * Map in LWK image to Linux kernel space
 	 */
@@ -716,8 +729,10 @@ static int smp_ihk_os_map_lwk(unsigned long phys)
 		return -1;
 	}
 
-	spin_lock_irqsave(ihk_vmap_area_lock, flags);
+	unsigned long flags;
+	int vmap_area_taken = 0;
 
+	spin_lock_irqsave(ihk_vmap_area_lock, flags);
 	if ((vmap_area_taken = smp_ihk_arch_vmap_area_taken())) {
 		kfree(lwk_va);
 		lwk_va = NULL;
@@ -728,17 +743,14 @@ static int smp_ihk_os_map_lwk(unsigned long phys)
 		lwk_va->va_start = IHK_SMP_MAP_KERNEL_START;
 		lwk_va->va_end = MODULES_END;
 		lwk_va->flags = 0;
-#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
-		ihk_insert_vmap_area(lwk_va,ihk_vmap_area_root, ihk_vmap_area_list);
-#elif
 		ihk___insert_vmap_area(lwk_va);
-#endif
 	}
 
 	spin_unlock_irqrestore(ihk_vmap_area_lock, flags);
 
 	if (vmap_area_taken)
 		return -1;
+#endif
 
 	if (ihk_ioremap_page_range(IHK_SMP_MAP_KERNEL_START, MODULES_END,
 				   phys, PAGE_KERNEL_EXEC) < 0) {
@@ -769,6 +781,7 @@ static int smp_ihk_os_load_file(ihk_os_t ihk_os, void *priv, const char *fn)
 	os->bootstrap_mem_start = 0;
 	os->bootstrap_mem_end = 0;
 
+	printk("IHK-SMP: load_file");
 	/* Update bootstrap_numa_id with the lowest NUMA id if not set */
 	/* TODO: add IHK API to set bootstrap_numa_id */
 	if (os->bootstrap_numa_id == -1) {
@@ -1046,7 +1059,7 @@ static void add_free_mem_chunk(struct chunk *chunk)
 		list_add_tail(&chunk->chain, &ihk_mem_free_chunks);
 	}
 
-	dprintf("IHK-SMP: free mem chunk 0x%lx - 0x%lx added\n",
+	printk("IHK-SMP: free mem chunk 0x%lx - 0x%lx added\n",
 	        chunk->addr, chunk->addr + chunk->size);
 }
 
@@ -1061,7 +1074,7 @@ rerun:
 		if (mem_chunk != mem_chunk_next &&
 		    mem_chunk_next->addr == mem_chunk->addr + mem_chunk->size &&
 		    mem_chunk_next->numa_id == mem_chunk->numa_id) {
-			dprintf("IHK-SMP: free 0x%lx - 0x%lx and 0x%lx - 0x%lx merged\n",
+			printk("IHK-SMP: free 0x%lx - 0x%lx and 0x%lx - 0x%lx merged\n",
 			        mem_chunk->addr,
 			        mem_chunk->addr + mem_chunk->size,
 			        mem_chunk_next->addr,
@@ -1096,16 +1109,23 @@ static size_t max_size_mem_chunk(struct rb_root *root)
 static int smp_ihk_os_unmap_lwk(void)
 {
 	if (lwk_va) {
+
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+		printk("smp_ihk_osunmap_lwk: call vunmap");
+		/*vunmap(lwk_va);*/
+		vfree(lwk_va);
+		lwk_va = NULL;
+#elif
 		unsigned long flags;
 
 		/* Unmap LWK from Linux kernel virtual */
 		unmap_kernel_range_noflush(IHK_SMP_MAP_KERNEL_START,
 				MODULES_END - IHK_SMP_MAP_KERNEL_START);
-
 		spin_lock_irqsave(ihk_vmap_area_lock, flags);
 		ihk___free_vmap_area(lwk_va);
 		lwk_va = NULL;
 		spin_unlock_irqrestore(ihk_vmap_area_lock, flags);
+#endif
 	}
 	return 0;
 }
@@ -1133,7 +1153,7 @@ static int smp_ihk_os_shutdown(ihk_os_t ihk_os, void *priv, int flag)
 		ihk_smp_cpus[i].status = IHK_SMP_CPU_AVAILABLE;
 		ihk_smp_cpus[i].os = (ihk_os_t)0;
 
-		dprintk("IHK-SMP: CPU %d has been deassigned, HWID: %d\n",
+		printk("IHK-SMP: CPU %d has been deassigned, HWID: %d\n",
 		       ihk_smp_cpus[i].id, ihk_smp_cpus[i].hw_id);
 	}
 	os->nr_cpus = 0;
@@ -1163,7 +1183,7 @@ static int smp_ihk_os_shutdown(ihk_os_t ihk_os, void *priv, int flag)
 		mem_chunk->numa_id = os_mem_chunk->numa_id;
 		INIT_LIST_HEAD(&mem_chunk->chain);
 
-		dprintk("IHK-SMP: mem chunk: 0x%lx - 0x%lx (len: %lu) freed\n",
+		printk("IHK-SMP: mem chunk: 0x%lx - 0x%lx (len: %lu) freed\n",
 				mem_chunk->addr, mem_chunk->addr + mem_chunk->size,
 				mem_chunk->size);
 
@@ -1545,7 +1565,7 @@ static int __assign_cpus(ihk_os_t ihk_os, struct smp_os_data *os,
 
 	for (i = 0; i < num_cpus; i++) {
 		cpu = cpus[i];
-		dprintk(KERN_INFO "IHK-SMP: assigned CPU %d to OS %p\n",
+		printk(KERN_INFO "IHK-SMP: assigned CPU %d to OS %p\n",
 			cpu, ihk_os);
 
 		CORE_SET(ihk_smp_cpus[cpu].hw_id, os->cpu_hw_ids_map);
@@ -2769,7 +2789,7 @@ static int __smp_ihk_free_mem_from_rbtree(struct rb_root *root)
 			}
 		}
 
-		dprintf("IHK-SMP: 0x%lx - 0x%lx freed\n", pa, pa + size);
+		printk("IHK-SMP: 0x%lx - 0x%lx freed\n", pa, pa + size);
 		node = rb_first(root);
 	}
 
@@ -3140,7 +3160,7 @@ pre_out:
 		__mem_chunk_insert(&tmp_chunks, p);
 	}
 
-	dprintk("%s: allocated internally: %lu\n", __FUNCTION__, allocated);
+	printk("%s: allocated internally: %lu\n", __FUNCTION__, allocated);
 
 	/* Move the largest chunks to free list until we meet the required size */
 	allocated = 0;
@@ -4319,6 +4339,11 @@ static int ihk_smp_symbols_init(void)
 	if (WARN_ON(!ihk_ioremap_page_range))
 		goto err;
 
+#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+	ihk___vmalloc_node_range =
+		(void *)kallsyms_lookup_name("__vmalloc_node_range");
+
+#elif
 	ihk_vmap_area_lock = (void *)kallsyms_lookup_name("vmap_area_lock");
 	if (WARN_ON(!ihk_vmap_area_lock))
 		goto err;
@@ -4327,30 +4352,15 @@ static int ihk_smp_symbols_init(void)
 	if (WARN_ON(!ihk_vmap_area_root))
 		goto err;
 
-#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
-	ihk_vmap_area_list = (void *)kallsyms_lookup_name("vmap_area_list");
-	if (WARN_ON(!ihk_vmap_area_list))
-		goto err;
-
-	ihk_insert_vmap_area =
-		(void *)kallsyms_lookup_name("insert_vmap_area");
-	if(!ihk_insert_vmap_area){
-		ihk_insert_vmap_area =
-		(void *)kallsyms_lookup_name("insert_vmap_area.constprop.0");
-	}
-
-	if (WARN_ON(!ihk_insert_vmap_area))
-		goto err;
-#elif
 	ihk___insert_vmap_area =
 		(void *)kallsyms_lookup_name("__insert_vmap_area");
 	if (WARN_ON(!ihk___insert_vmap_area))
 		goto err;
-#endif
 
 	ihk___free_vmap_area = (void *)kallsyms_lookup_name("__free_vmap_area");
 	if (WARN_ON(!ihk___free_vmap_area))
 		goto err;
+#endif
 
 #ifdef IHK_IKC_USE_LINUX_WORK_IRQ
 #ifndef CONFIG_IRQ_WORK
