@@ -34,7 +34,7 @@
 #include <ihk/ihk_host_user.h>
 #include <sys/timerfd.h>
 
-#define DEBUG
+/*#define DEBUG*/
 
 #ifdef DEBUG
 #define	dprintf(...)											\
