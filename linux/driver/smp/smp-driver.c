@@ -101,7 +101,7 @@ static void* (*ihk___vmalloc_node_range)(unsigned long size, unsigned long align
 			unsigned long start, unsigned long end, gfp_t gfp_mask,
 			pgprot_t prot, unsigned long vm_flags, int node,
 			const void *caller);
-#elif
+#else
 static struct vmap_area *lwk_va;
 spinlock_t *ihk_vmap_area_lock;
 
@@ -720,7 +720,7 @@ static int smp_ihk_os_map_lwk(unsigned long phys)
 	if(!lwk_va){
 		return -1;
 	}
-#elif
+#else
 	/*
 	 * Map in LWK image to Linux kernel space
 	 */
@@ -1115,7 +1115,7 @@ static int smp_ihk_os_unmap_lwk(void)
 		/*vunmap(lwk_va);*/
 		vfree(lwk_va);
 		lwk_va = NULL;
-#elif
+#else
 		unsigned long flags;
 
 		/* Unmap LWK from Linux kernel virtual */
@@ -4343,7 +4343,7 @@ static int ihk_smp_symbols_init(void)
 	ihk___vmalloc_node_range =
 		(void *)kallsyms_lookup_name("__vmalloc_node_range");
 
-#elif
+#else
 	ihk_vmap_area_lock = (void *)kallsyms_lookup_name("vmap_area_lock");
 	if (WARN_ON(!ihk_vmap_area_lock))
 		goto err;
