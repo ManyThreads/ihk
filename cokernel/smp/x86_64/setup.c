@@ -276,6 +276,14 @@ int ihk_set_monitor(unsigned long addr, unsigned long size)
 	return 0;
 }
 
+int ihk_set_graph_mem(unsigned long addr, unsigned long size)
+{
+	boot_param->graph_mem = addr;
+	boot_param->graph_mem_size = size;
+	
+	return 0;
+}
+
 int ihk_set_rusage(unsigned long addr, unsigned long size)
 {
 	boot_param->rusage = addr;
