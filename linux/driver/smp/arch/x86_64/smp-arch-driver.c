@@ -32,7 +32,9 @@
 
 #include <asm/realmode.h>
 #include <asm/apic.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,4,0)
 #include <asm/ipi.h>
+#endif
 #include <asm/uv/uv.h>
 #include <asm/nmi.h>
 #include <ihk/ihk_host_driver.h>

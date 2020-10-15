@@ -18,6 +18,31 @@
 #include <linux/cpu.h>
 #include <linux/rbtree.h>
 #include <linux/ctype.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
+struct memcg_cache_params {
+	struct kmem_cache *root_cache;
+	union {
+		struct {
+			struct memcg_cache_array __rcu *memcg_caches;
+			struct list_head __root_caches_node;
+			struct list_head children;
+			bool dying;
+		};
+		struct {
+			struct mem_cgroup *memcg;
+			struct list_head children_node;
+			struct list_head kmem_caches_node;
+			struct percpu_ref refcnt;
+
+			void (*work_fn)(struct kmem_cache *);
+			union {
+				struct rcu_head rcu_head;
+				struct work_struct work;
+			};
+		};
+	};
+};
+#endif
 #include <linux/slub_def.h>
 #include <linux/kallsyms.h>
 #include <linux/list_sort.h>

@@ -4,7 +4,7 @@
 #define BUILDID "${BUILDID}"
 
 /* whether memdump feature is enabled */
-#cmakedefine ENABLE_MEMDUMP 1
+//#cmakedefine ENABLE_MEMDUMP 1
 
 /* whether perf is enabled */
 #cmakedefine ENABLE_PERF 1
